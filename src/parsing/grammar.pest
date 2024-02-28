@@ -1,0 +1,177 @@
+file = _{ SOI ~ top_level* ~ EOI }
+
+top_level = _{ struct | enum | func | import }
+
+import = { vis ~ kw_import ~ path ~ semicolon }
+
+struct        = { vis ~ kw_struct ~ ident ~ "{" ~ struct_fields ~ "}" }
+struct_fields = { (struct_field ~ ("," ~ struct_field)* ~ ","?)? }
+struct_field  = { ty ~ ident }
+
+enum        = { vis ~ kw_enum ~ ty ~ ident ~ "{" ~ enum_fields ~ "}" }
+enum_fields = { (enum_field ~ ("," ~ enum_field)* ~ ","?)? }
+enum_field  = { ident ~ ("=" ~ int)? }
+
+func      = { vis ~ kw_func ~ ty ~ path ~ "(" ~ func_args ~ ")" ~ block }
+func_args = { (func_arg ~ ("," ~ func_arg)* ~ ","?)? }
+func_arg  = { ty ~ ident }
+
+vis = { pub | "" }
+pub = { kw_pub }
+
+block     = { "{" ~ statement* ~ "}" }
+statement = { if | for | while | forever | (line_stmt ~ ";") }
+
+if        = { if_top ~ else_ifs ~ else_maybe }
+if_top    = { kw_if ~ expression ~ block }
+else_ifs   = { else_if* }
+else_if    = { kw_else ~ kw_if ~ expression ~ block }
+else_maybe = { else? }
+else      = { kw_else ~ block }
+
+for     = { kw_for ~ line_stmt ~ semicolon ~ expression? ~ semicolon ~ expression? ~ block }
+while   = { kw_while ~ expression ~ block }
+forever = { kw_forever ~ block }
+
+line_stmt = _{ break | continue | return | drop | init | expression | "" }
+break     = { kw_break }
+continue  = { kw_continue }
+return    = { kw_return ~ expression? }
+drop      = { kw_drop ~ expression }
+init      = { ty ~ ident ~ ("=" ~ expression)? }
+
+expression_list  =  { (expression ~ ("," ~ expression)* ~ ","?)? }
+expression = _{ assign_exp }
+
+assign_exp  = { log_or_exp ~ (assign ~ log_or_exp)* }
+log_or_exp  = { log_and_exp ~ (log_or ~ log_and_exp)* }
+log_and_exp = { bit_or_exp ~ (log_and ~ bit_or_exp)* }
+bit_or_exp  = { bit_xor_exp ~ (bit_or ~ bit_xor_exp)* }
+bit_xor_exp = { bit_and_exp ~ (bit_xor ~ bit_and_exp)* }
+bit_and_exp = { eq_exp ~ (bit_and ~ eq_exp)* }
+eq_exp      = { rel_exp ~ (eq ~ rel_exp)* }
+rel_exp     = { shift_exp ~ (rel ~ shift_exp)* }
+shift_exp   = { sum_exp ~ (shift ~ sum_exp)* }
+sum_exp     = { prod_exp ~ (sum ~ prod_exp)* }
+prod_exp    = { pref_exp ~ (prod ~ pref_exp)* }
+pref_exp    = { pref* ~ access_exp }
+access_exp  = { post_exp ~ (access ~ post_exp)* }
+post_exp    = { atom ~ post* }
+
+assign  = _{ set }
+set     =  { "=" }
+log_or  = _{ logor }
+logor   =  { "||" }
+log_and = _{ logand }
+logand  =  { "&&" }
+bit_or  = _{ bitor }
+bitor   =  { "|" }
+bit_and = _{ bitand }
+bitand  =  { "&" }
+bit_xor = _{ bitxor }
+bitxor  =  { "^" }
+eq      = _{ equ | neq }
+equ     =  { "==" }
+neq     =  { "!=" }
+rel     = _{ lt | gt | leq | geq | space }
+lt      =  { "<" }
+gt      =  { ">" }
+leq     =  { "<=" }
+geq     =  { ">=" }
+space   =  { "<=>" }
+shift   = _{ shl | shr }
+shl     =  { "<<" }
+shr     =  { ">>" }
+sum     = _{ add | sub }
+add     =  { "+" }
+sub     =  { "-" }
+prod    = _{ mul | div | mod }
+mul     =  { "*" }
+div     =  { "/" }
+mod     =  { "%" }
+pref    = _{ not | neg | ref | deref }
+not     =  { "!" }
+neg     =  { "-" }
+ref     =  { "&" }
+deref   =  { "*" }
+access  = _{ member }
+member  =  { "." }
+post    = _{ call | index | cast }
+call    =  { "(" ~ expression_list ~ ")" }
+index   =  { "[" ~ expression ~ "]" }
+cast    =  { kw_as ~ ty }
+
+atom = { size | path | alloc | int | float | string | "[" ~ expression_list ~ "]" | "(" ~ expression ~ ")" }
+
+size  = { kw_size ~ ty }
+path  = { ident ~ ("::" ~ ident)* }
+alloc = { kw_alloc ~ ty }
+
+
+int = _{ dec_int | hex_int | bin_int | oct_int | char_ }
+
+dec_int = @{ ASCII_DIGIT+ }
+hex_int = @{ ASCII_HEX_DIGIT+ }
+bin_int = @{ ASCII_BIN_DIGIT+ }
+oct_int = @{ ASCII_OCT_DIGIT+ }
+
+char_ = _{"'" ~ char ~ "'"}
+char = {("\\" | !"\'") ~ ANY}
+
+float    = @{ fl_both | fl_fract | fl_int | fl_bare }
+fl_both  =  _{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ ~ fl_exp? }
+fl_fract =  _{ "." ~ ASCII_DIGIT+ ~ fl_exp? }
+fl_int   =  _{ ASCII_DIGIT+ ~ "." ~ fl_exp? }
+fl_bare  =  _{ ASCII_DIGIT+ ~ fl_exp }
+fl_exp   =  _{ ("E" | "e") ~ ("+" | "-")? ~ ASCII_DIGIT+ }
+
+string       = _{ "\"" ~ string_inner ~ "\"" }
+string_inner =  { (("\\" | !"\"") ~ ANY)* }
+
+ty     = _{ ptr_ty | arr_ty | idt_ty }
+ptr_ty =  { "*" ~ ty }
+arr_ty =  { "[" ~ ty ~ ";" ~ int ~ "]" }
+idt_ty =  { ident }
+ident  = @{ !keyword ~ (ASCII_ALPHANUMERIC | "_")+ }
+
+keyword     = _{
+    kw_struct
+  | kw_enum
+  | kw_func
+  | kw_if
+  | kw_else
+  | kw_for
+  | kw_while
+  | kw_forever
+  | kw_break
+  | kw_continue
+  | kw_return
+  | kw_pub
+  | kw_alloc
+  | kw_drop
+  | kw_as
+  | kw_size
+  | kw_import
+}
+kw_struct   = _{ "struct" }
+kw_enum     = _{ "enum" }
+kw_func     = _{ "function" }
+kw_if       = _{ "if" }
+kw_else     = _{ "else" }
+kw_for      = _{ "for" }
+kw_while    = _{ "while" }
+kw_forever  = _{ "forever" }
+kw_break    = _{ "break" }
+kw_continue = _{ "continue" }
+kw_return   = _{ "return" }
+kw_pub      = _{ "public" }
+kw_alloc    = _{ "alloc" }
+kw_drop     = _{ "drop" }
+kw_as       = _{ "as" }
+kw_size     = _{ "size" }
+kw_import   = _{ "import" }
+
+semicolon = _{ ";" }
+
+WHITESPACE = _{ " " | "\r" | "\t" | "\n" }
+COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* | "/" ~ PUSH("*"*) ~ (!(PEEK ~ "/") ~ ANY) ~ POP ~ "/" }
