@@ -5,5 +5,5 @@
 use pest_derive::Parser;
 
 #[derive(Parser)]
-#[grammar = "grammar.pest"]
+#[grammar = "parsing/grammar.pest"]
 pub(crate) struct Parser;
