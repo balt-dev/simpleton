@@ -9,7 +9,7 @@ struct        = { vis ~ kw_struct ~ ident ~ "{" ~ struct_fields ~ "}" }
 struct_fields = { (struct_field ~ ("," ~ struct_field)* ~ ","?)? }
 struct_field  = { vis ~ ty ~ ident }
 
-struct        = { vis ~ kw_union ~ ident ~ "{" ~ struct_fields ~ "}" }
+union        = { vis ~ kw_union ~ ident ~ "{" ~ struct_fields ~ "}" }
 
 enum        = { vis ~ kw_enum ~ enum_repr ~ ident ~ "{" ~ enum_fields ~ "}" }
 enum_fields = { (enum_field ~ ("," ~ enum_field)* ~ ","?)? }
