@@ -5,6 +5,9 @@ top_level = _{ struct | enum | func | import | extern | constant | static }
 import = { vis ~ kw_import ~ path ~ semicolon }
 extern = { vis ~ kw_extern ~ kw_import ~ string ~ semicolon }
 
+constant = { vis ~ kw_constant ~ ty ~ ident ~ "=" ~ expression ~ semicolon}
+static = { vis ~ kw_static ~ ty ~ ident ~ "=" ~ expression ~ semicolon}
+
 struct        = { vis ~ kw_struct ~ ident ~ "{" ~ struct_fields ~ "}" }
 struct_fields = { (struct_field ~ ("," ~ struct_field)* ~ ","?)? }
 struct_field  = { vis ~ ty ~ ident }
@@ -16,12 +19,13 @@ enum_fields = { (enum_field ~ ("," ~ enum_field)* ~ ","?)? }
 enum_field  = { ident ~ ("=" ~ int)? }
 enum_repr   = { "uint8" | "uint16" | "uint32" | "uint64" | "int8" | "int16" | "int32" | "int64" | "uptr" | "ptr" }
 
-func      = { vis ~ maybe_marker ~ kw_func ~ ty ~ path ~ "(" ~ func_args ~ ")" ~ block }
+func      = { vis ~ maybe_const ~ maybe_inline ~ kw_func ~ ty ~ path ~ "(" ~ func_args ~ ")" ~ block }
 func_args = { (func_arg ~ ("," ~ func_arg)* ~ ","?)? }
 func_arg  = { ty ~ ident }
 
 vis          = { public | internal | "" }
-maybe_marker  = { const_marker | inline_marker | "" }
+maybe_const  = { const_marker | "" }
+maybe_inline  = { inline_marker | "" }
 const_marker = { kw_constant }
 inline_marker = { kw_inline }
 public       = { kw_pub }
@@ -72,9 +76,9 @@ set     =  { "=" }
 ternary = _{ if_infx }
 if_infx =  { kw_if ~ expression ~ kw_else }
 log_or  = _{ logor }
-logor   =  { "||" }
+logor   =  { "or" }
 log_and = _{ logand }
-logand  =  { "&&" }
+logand  =  { "and" }
 bit_or  = _{ bitor }
 bitor   =  { "|" }
 bit_and = _{ bitand }

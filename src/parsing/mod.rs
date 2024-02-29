@@ -2,5 +2,4 @@
 
 pub(crate) mod peg;
 
-mod tokens;
-pub use tokens::*;
+pub mod tokens;
