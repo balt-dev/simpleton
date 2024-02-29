@@ -84,7 +84,7 @@ bitor   =  { "|" }
 bit_and = _{ bitand }
 bitand  =  { "&" }
 bit_xor = _{ bitxor }
-bitxor  =  { "^" }
+bitxor  =  { "^" | "xor" }
 eq      = _{ equ | neq }
 equ     =  { "==" }
 neq     =  { "!=" }
@@ -105,7 +105,7 @@ mul     =  { "*" }
 div     =  { "/" }
 mod     =  { "%" }
 pref    = _{ not | neg | ref | deref }
-not     =  { "!" }
+not     =  { "!" | "not" }
 neg     =  { "-" }
 ref     =  { "&" }
 deref   =  { "*" }

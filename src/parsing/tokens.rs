@@ -255,8 +255,51 @@ pub enum Infix {
     Add,
     /// Subtracts the left hand side from the right hand side.
     Subtract,
-    /// Multiplies the left hand side from the right hand side.
+    /// Multiplies the left hand side by the right hand side.
     Multiply,
+    /// Divides the left hand side by the right hand side.
+    Divide,
+    /// Takes the remainder of dividing the left hand side by the right hand side.
+    Remainder,
+    /// Accesses a member of the left hand side dictated by the right hand side.
+    Access,
+}
+
+impl Infix {
+    /// Gets the precedence of this infix.
+    fn precedence(&self) -> usize {
+        use Infix::*;
+        match self {
+            Access => 0,
+            Multiply | Divide | Remainder => 1,
+            Add | Subtract => 2,
+            ShiftLeft | ShiftRight => 3,
+            Less | LessOrEqual | Greater | GreaterOrEqual | Spaceship => 4,
+            Equal | NotEqual => 5,
+            BitwiseXor => 6,
+            BitwiseAnd => 7,
+            BitwiseOr => 8,
+            LogicalAnd => 9,
+            LogicalOr => 10,
+            Ternary(..) => 11,
+            Assign => 12
+        }
+    }
+}
+
+impl Ord for Infix {
+    /// Gets the ordering of this infix, comparing by operator precedence.
+    /// Operators processed first will be marked as less than operators processed last.
+    /// Operator precedence is **guaranteed** to be stable across minor versions.
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.precedence().cmp(&other.precedence())
+    }
+}
+
+impl PartialOrd for Infix {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// Represents either a prefix or postfix operand for an expression.
@@ -326,7 +369,7 @@ macro_rules! display_impl {
     )+) => {$(
         impl Display for $name {
             fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-                self.display(f, f.alternate().then_some(0))
+                self.display(f, 0)
             }
         }
 
@@ -336,89 +379,80 @@ macro_rules! display_impl {
     )+};
 }
 
-macro_rules! writeln_indent {
-    ($f: ident, $indent: ident $($spec: ident)?, $str: literal $(, $($tt:tt)*)?) => {
-        match &mut $indent {
-            Some(indent) => {{
-                writeln_indent!(+_mut indent $f $str $($spec)? $($($tt)+)?);
-                Ok(())
-            }}
-            None => write!(
-                $f, concat!($str, " ") $(, $($tt)+)?
-            )
-        }
-    };
-    (+_mut $indent: ident $f: ident $str: literal in $($($tt: tt)+)?) => {
-        *$indent += 1;
+macro_rules! write_indented {
+    ($f: ident, $indent: ident, $str: literal $(, $($tt:tt)*)?) => {{
         write!(
-            $f, concat!($str, "\n{}"), $($($tt)+ ,)? "\t".repeat(*$indent)
-        )?;
-    };
-    (+_mut $indent: ident $f: ident $str: literal out $($($tt: tt)+)?) => {
-        *$indent -= 1;
-        write!(
-            $f, concat!("\n{}", $str), "\t".repeat(*$indent) $(, $($tt)+)?
-        )?;
-    };
-    (+_mut $indent: ident $f: ident $str: literal $($($tt: tt)+)?) => {
-        write!(
-            $f, concat!($str, "\n{}"), "\t".repeat(*$indent) $(, $($tt)+)?
-        )?;
-    };
+            $f, concat!("{}", $str), "\t".repeat($indent) $(, $($tt)+)?
+        )
+    }};
+}
+
+macro_rules! writeln_indented {
+    ($f: ident, $indent: ident, $str: literal $(, $($tt:tt)*)?) => {{
+        writeln!(
+            $f, concat!("{}", $str), "\t".repeat($indent) $(, $($tt)+)?
+        )
+    }};
 }
 
 display_impl! {
 
     impl Display for Element {
-        fn display(&self, f: &mut Formatter<'_>, mut indent: Option<usize>) -> fmt::Result {
+        fn display(&self, f: &mut Formatter<'_>, mut indent: usize) -> fmt::Result {
             match self {
                 Element::Import{vis, path } =>
-                    writeln_indent!(f, indent, "{}import {}", vis, path.join("::")),
+                    write_indented!(f, indent, "{}import {}", vis, path.join("::")),
                 Element::ExternalImport{vis, path } =>
-                    writeln_indent!(f, indent, "{}import {}", vis, path.escape_default()),
+                    write_indented!(f, indent, "{}import {}", vis, path.escape_default()),
                 Element::Struct{vis, name, fields } => {
-                    writeln_indent!(
-                        f, indent in, "{}struct {} {{", vis, name
+                    writeln_indented!(
+                        f, indent, "{}struct {} {{", vis, name
                     )?;
+                    indent += 1;
                     for (vis, ty, name) in fields {
-                        writeln_indent!(
+                        writeln_indented!(
                             f, indent, "{}{} {}", vis, ty, name
                         )?;
                     }
-                    writeln_indent!(f, indent out, "}}")
+                    indent -= 1;
+                    write_indented!(f, indent, "}}")
                 },
                 Element::Constant{vis, ty, name, value } =>
-                    writeln_indent!(f, indent, "{}constant {} {} = {};", vis, ty, name, value),
+                    write_indented!(f, indent, "{}constant {} {} = {};", vis, ty, name, value),
                 Element::Static{vis, ty, name, value} =>
-                    writeln_indent!(f, indent, "{}static {} {} = {};", vis, ty, name, value),
+                    write_indented!(f, indent, "{}static {} {} = {};", vis, ty, name, value),
                 Element::Enum{vis, repr, name, variants} => {
-                    writeln_indent!(
-                        f, indent in, "{}enum {} {} {{", vis, repr, name
+                    writeln_indented!(
+                        f, indent, "{}enum {} {} {{", vis, repr, name
                     )?;
+                    indent += 1;
                     let mut last_repr = 0;
                     for (vis, name, repr) in variants {
                         if repr.saturating_sub(1) == last_repr {
-                            writeln_indent!(f, indent, "{}{},", vis, name)?;
+                            writeln_indented!(f, indent, "{}{},", vis, name)?;
                         } else {
-                            writeln_indent!(f, indent, "{}{} = {},", vis, name, repr)?;
+                            writeln_indented!(f, indent, "{}{} = {},", vis, name, repr)?;
                         }
                         last_repr = *repr;
                     }
-                    writeln_indent!(f, indent out, "}}")
+                    indent -= 1;
+                    write_indented!(f, indent, "}}")
                 },
                 Element::Union{ name, representations, vis } => {
-                    writeln_indent!(
-                        f, indent in, "{}union {} {{", vis, name
+                    writeln_indented!(
+                        f, indent, "{}union {} {{", vis, name
                     )?;
+                    indent += 1;
                     for (vis, ty, name) in representations {
-                        writeln_indent!(
+                        writeln_indented!(
                             f, indent, "{}{} {}", vis, ty, name
                         )?;
                     }
-                    writeln_indent!(f, indent out, "}}")
+                    indent -= 1;
+                    write_indented!(f, indent, "}}")
                 },
                 Element::Function{vis,constant,inline,ty,path,arguments,block  } => {
-                    writeln_indent!(f, indent, "{}", vis)?;
+                    write_indented!(f, indent, "{}", vis)?;
                     if *constant {
                         write!(f, "constant ")?;
                     }
@@ -432,14 +466,16 @@ display_impl! {
                             arguments.iter().map(|(ty, name)| {
                                 format!("{ty} {name}")
                             }),
-                            ",".to_string()
+                            ", ".to_string()
                         ).collect::<String>()
                     )?;
-                    writeln_indent!(f, indent in, "")?;
+                    indent += 1;
+                    writeln!(f)?;
                     for statement in block {
-                        writeln_indent!(f, indent, "{}", statement)?;
+                        writeln_indented!(f, indent, "{}", statement)?;
                     }
-                    writeln_indent!(f, indent out, "}}")
+                    indent -= 1;
+                    write_indented!(f, indent, "}}")
                 },
             }
         }
@@ -447,7 +483,7 @@ display_impl! {
 
     impl Display for Visibility {
         // This isn't ACTUALLY a trait, so we can drop the & out front for performance
-        fn display(self, f: &mut Formatter<'_>, _indent: Option<usize>) -> fmt::Result {
+        fn display(self, f: &mut Formatter<'_>, _indent: usize) -> fmt::Result {
             match self {
                 Visibility::Private => Ok(()),
                 Visibility::Internal => write!(f, "internal "),
@@ -457,7 +493,7 @@ display_impl! {
     }
 
     impl Display for Type {
-        fn display(&self, f: &mut Formatter<'_>, _indent: Option<usize>) -> fmt::Result {
+        fn display(&self, f: &mut Formatter<'_>, _indent: usize) -> fmt::Result {
             let mut array_counts = Vec::new();
             for tag in &self.tags {
                 match tag {
@@ -477,7 +513,7 @@ display_impl! {
     }
 
     impl Display for EnumRepr {
-        fn display(self, f: &mut Formatter<'_>, _indent: Option<usize>) -> fmt::Result {
+        fn display(self, f: &mut Formatter<'_>, _indent: usize) -> fmt::Result {
             write!(f, "{}", match self {
                 EnumRepr::Unsigned8 => "uint8",
                 EnumRepr::Unsigned16 => "uint16",
@@ -494,43 +530,110 @@ display_impl! {
     }
 
 
-}
-
-impl Statement {
-    fn display(&self, f: &mut Formatter<'_>, mut indent: Option<usize>) -> fmt::Result {
-        match self {
-            Statement::Expression(expr) =>
-                writeln_indent!(f, indent, "{};", expr),
-            Statement::If { cases, fallback } => {
-                writeln_indent!(f, indent, "")?;
-                let mut first_case = false;
-                for (expr, block) in cases {
-                    if !first_case {
-                        write!(f, "else ")?;
+    impl Display for Statement {
+        fn display(&self, f: &mut Formatter<'_>, mut indent: usize) -> fmt::Result {
+            match self {
+                Statement::Expression(expr) =>
+                    write_indented!(f, indent, "{};", expr),
+                Statement::If { cases, fallback } => {
+                    let mut first_case = true;
+                    for (expr, block) in cases {
+                        if !first_case {
+                            writeln!(f, " else if {} {{", expr)?;
+                        } else {
+                            writeln_indented!(f, indent, "if {} {{", expr)?;
+                            indent += 1;
+                        }
+                        indent += 1;
+                        
+                        for statement in block {
+                            writeln_indented!(f, indent, "{}", statement)?;
+                        }
+                        indent -= 1;
+                        write_indented!(f, indent, "}}")?;
+                        first_case = false;
                     }
-                    writeln_indent!(f, indent in, "if {} {{", expr)?;
-                    for statement in block {
-                        writeln_indent!(f, indent, "{}", statement)?;
+                    if let Some(fallback) = fallback {
+                        writeln!(f, " else {{")?;
+                        indent += 1;
+                        for statement in fallback {
+                            writeln_indented!(f, indent, "{}", statement)?;
+                        }
+                        indent -= 1;
+                        write_indented!(f, indent, "}}")?;
                     }
-                    writeln_indent!(f, indent out, "}}")?;
+                    Ok(())
                 }
-                if let Some(fallback) = fallback {
-                    writeln_indent!(f, indent in, "else {{")?;
-                    for statement in fallback {
-                        writeln_indent!(f, indent, "{}", statement)?;
-                    }
-                    writeln_indent!(f, indent out, "}}")?;
-                }
-                Ok(())
+                Statement::For { init, check, update, inner } => todo!(),
+                Statement::While { .. } => todo!(),
+                Statement::Forever { .. } => todo!(),
+                Statement::Break => todo!(),
+                Statement::Continue => todo!(),
+                Statement::Return { .. } => todo!(),
+                Statement::Drop { .. } => todo!(),
+                Statement::Initialize { .. } => todo!()
             }
-            Statement::For { .. } => {}
-            Statement::While { .. } => {}
-            Statement::Forever { .. } => {}
-            Statement::Break => {}
-            Statement::Continue => {}
-            Statement::Return { .. } => {}
-            Statement::Drop { .. } => {}
-            Statement::Initialize { .. } => {}
+        }
+    }
+
+    impl Display for Expression {
+        fn display(&self, f: &mut Formatter<'_>, _indent: usize) -> fmt::Result {
+            write!(f, "<expr: TODO>")
         }
     }
 }
+
+
+
+
+
+
+fn main() {
+    let tree = Element::Function {
+        vis: Visibility::Public,
+        constant: true,
+        inline: true,
+        ty: Type {
+            tags: vec![TypeTag::Pointer, TypeTag::Array { length: 8 }, TypeTag::Pointer],
+            name: "uint8".into()
+        },
+        path: vec!["Struct".into(), "function".into()],
+        arguments: vec![
+            (
+                Type {
+                    tags: vec![TypeTag::Pointer],
+                    name: "uint8".into()
+                },
+                "arg1".to_string()
+            ),
+            (
+                Type {
+                    tags: vec![TypeTag::Array { length: 8 }],
+                    name: "float32".into()
+                },
+                "arg2".to_string()
+            )
+        ],
+        block: vec![
+            Statement::Expression(Expression::Atom(Atom)),
+            Statement::Expression(Expression::Atom(Atom)),
+            Statement::Expression(Expression::Atom(Atom)),
+            Statement::If {
+                cases: vec![
+                    (
+                        Expression::Binary { lhs: Box::new(Expression::Atom(Atom)), opr: Infix::Equal, rhs: Box::new(Expression::Atom(Atom)) },
+                        vec![Statement::Expression(Expression::Atom(Atom)), Statement::Expression(Expression::Atom(Atom))]
+                    ),
+                    (
+                        Expression::Unary { opr: UnaryOperand::Not, expr: Box::new(Expression::Atom(Atom)), },
+                        vec![Statement::Expression(Expression::Atom(Atom)), Statement::Expression(Expression::Atom(Atom))]
+                    )
+                ],
+                fallback: Some(vec![Statement::Expression(Expression::Atom(Atom)), Statement::Expression(Expression::Atom(Atom))])
+            }
+        ],
+    };
+
+    println!("{tree:#}")
+}
+
