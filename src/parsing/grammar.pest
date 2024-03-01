@@ -66,10 +66,10 @@ eq_exp      = { rel_exp ~ (eq ~ rel_exp)* }
 rel_exp     = { shift_exp ~ (rel ~ shift_exp)* }
 shift_exp   = { sum_exp ~ (shift ~ sum_exp)* }
 sum_exp     = { prod_exp ~ (sum ~ prod_exp)* }
-prod_exp    = { pref_exp ~ (prod ~ pref_exp)* }
-pref_exp    = { pref* ~ access_exp }
+prod_exp    = { access_exp ~ (prod ~ access_exp)* }
 access_exp  = { post_exp ~ (access ~ post_exp)* }
-post_exp    = { atom ~ post* }
+post_exp    = { pref_exp ~ post* }
+pref_exp    = { pref* ~ atom }
 
 assign  = _{ set }
 set     =  { "=" }
@@ -87,7 +87,7 @@ bit_xor = _{ bitxor }
 bitxor  =  { "^" | "xor" }
 eq      = _{ equ | neq }
 equ     =  { "==" }
-neq     =  { "!=" }
+neq     =  { "!=" | "<>" }
 rel     = _{ lt | gt | leq | geq | space }
 lt      =  { "<" }
 gt      =  { ">" }

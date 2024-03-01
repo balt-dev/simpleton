@@ -225,8 +225,14 @@ impl PartialOrd for Expression {
         match (self, other) {
             (&Expression::Unary { .. }, &Expression::Binary { .. })
                 => Some(Ordering::Less),
-            (&Expression::Unary { opr: ref opr1, expr: ref expr1 }, &Expression::Unary { opr: ref opr2, expr: ref expr2 })
-                => (expr1 == expr2 && opr1 == opr2).then_some(Ordering::Equal),
+            (&Expression::Unary { opr: ref opr1, expr: ref expr1 }, &Expression::Unary { opr: ref opr2, expr: ref expr2 })=> {
+                let ordering = opr1.cmp(&opr2);
+                if ordering == Ordering::Equal {
+                    (expr1 == expr2).then_some(Ordering::Equal)
+                } else {
+                    Some(ordering)
+                }
+            },
             (&Expression::Unary { .. }, &Expression::Atom(..))
                 => Some(Ordering::Less),
             (&Expression::Binary { .. }, &Expression::Atom(..))
@@ -307,17 +313,26 @@ impl Infix {
         use Infix::*;
         match self {
             Access => 0,
-            Multiply | Divide | Remainder => 1,
-            Add | Subtract => 2,
-            ShiftLeft | ShiftRight => 3,
-            Less | LessOrEqual | Greater | GreaterOrEqual | Spaceship => 4,
-            Equal | NotEqual => 5,
-            BitwiseXor => 6,
-            BitwiseAnd => 7,
-            BitwiseOr => 8,
-            LogicalAnd => 9,
-            LogicalOr => 10,
-            Ternary(..) => 11,
+            Multiply => 1,
+            Divide => 2,
+            Remainder => 3,
+            Add => 4,
+            Subtract => 5,
+            ShiftLeft => 6,
+            ShiftRight => 7,
+            Less => 8,
+            Greater => 9,
+            LessOrEqual => 10,
+            GreaterOrEqual => 11,
+            Spaceship => 12,
+            Equal => 13,
+            NotEqual => 14,
+            BitwiseXor => 15,
+            BitwiseAnd => 16,
+            BitwiseOr => 17,
+            LogicalAnd => 18,
+            LogicalOr => 19,
+            Ternary(..) => 20,
         }
     }
 }
@@ -362,6 +377,31 @@ impl UnaryOperand {
     #[inline]
     pub fn is_prefix(&self) -> bool {
         matches!(self, UnaryOperand::Negation | UnaryOperand::Not | UnaryOperand::Reference | UnaryOperand::Dereference)
+    }
+
+    fn precedence(&self) -> usize {
+        use UnaryOperand::*;
+        match self {
+            Not => 0,
+            Negation => 1,
+            Reference => 2,
+            Dereference => 3,
+            Call(..) => 4,
+            Index(..) => 5,
+            Cast(..) => 6,
+        }
+    }
+}
+
+impl PartialOrd for UnaryOperand {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for UnaryOperand {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.precedence().cmp(&other.precedence())
     }
 }
 
@@ -588,7 +628,7 @@ display_impl! {
                             indent += 1;
                         }
                         indent += 1;
-                        
+
                         for statement in block {
                             writeln_indented!(f, indent, "{}", statement)?;
                         }
@@ -717,7 +757,7 @@ display_impl! {
                 UnaryOperand::Dereference => write!(f, "*"),
                 UnaryOperand::Call(list) => write!(f, "({})", list.iter().map(|v| format!("{v}")).join(", ")),
                 UnaryOperand::Index(expr) => write!(f, "[{expr}]"),
-                UnaryOperand::Cast(ty) => write!(f, "as {ty}"),
+                UnaryOperand::Cast(ty) => write!(f, " as {ty}"),
             }
         }
     }
@@ -750,8 +790,38 @@ fn main() {
             )
         ],
         block: vec![
-            Statement::Expression(Expression::Atom(Atom)),
-            Statement::Expression(Expression::Atom(Atom)),
+            Statement::Expression(Expression::Binary { 
+                lhs: Box::new(Expression::Binary{
+                    lhs: Box::new(Expression::Atom(Atom)),
+                    opr: Infix::Add,
+                    rhs: Box::new(Expression::Atom(Atom))
+                }), 
+                opr: Infix::Multiply, 
+                rhs: Box::new(Expression::Atom(Atom))
+            }),
+            Statement::Expression(Expression::Binary { 
+                lhs: Box::new(Expression::Binary{
+                    lhs: Box::new(Expression::Atom(Atom)),
+                    opr: Infix::Multiply,
+                    rhs: Box::new(Expression::Atom(Atom))
+                }), 
+                opr: Infix::Add, 
+                rhs: Box::new(Expression::Atom(Atom))
+            }),
+            Statement::Expression(Expression::Unary { 
+                opr: UnaryOperand::Dereference,
+                expr: Box::new(Expression::Unary{
+                    opr: UnaryOperand::Cast(Type { tags: vec![], name: "type".to_string() }),
+                    expr: Box::new(Expression::Atom(Atom))
+                }),
+            }),
+            Statement::Expression(Expression::Unary { 
+                opr: UnaryOperand::Cast(Type { tags: vec![], name: "type".to_string() }),
+                expr: Box::new(Expression::Unary{
+                    opr: UnaryOperand::Dereference,
+                    expr: Box::new(Expression::Atom(Atom))
+                }),
+            }),
             Statement::Expression(Expression::Atom(Atom)),
             Statement::If {
                 cases: vec![
