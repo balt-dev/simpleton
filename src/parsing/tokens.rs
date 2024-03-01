@@ -1,10 +1,10 @@
 //! Language constructs defining the AST of the language.
 
-use std::fmt::{
+use std::{cmp::Ordering, fmt::{
     self,
     Display,
     Formatter,
-};
+}};
 use itertools::Itertools;
 
 /// Alias for referencing a block of statements.
@@ -174,12 +174,21 @@ pub enum Statement {
         /// The value to drop.
         expr: Expression
     },
-    /// Initialize a value.
+    /// Initialize a variable.
     Initialize {
         /// The type of the new value.
         ty: Type,
+        /// The name of the variable to initialize.
+        name: String,
         /// The expression to initialize the new value with, if any.
         expr: Option<Expression>,
+    },
+    /// Assign a variable to the result of an expression.
+    Assign {
+        /// The expression being set.
+        lhs: Expression,
+        /// The expression to set the left hand side to.
+        rhs: Expression,
     },
 }
 
@@ -208,12 +217,39 @@ pub enum Expression {
     Atom(Atom),
 }
 
+impl PartialOrd for Expression {
+    /// Compares expressions by their precedence - that is, if one expression is greater than the other,
+    /// it would need to be parenthesized if inside of the other.
+    /// If the operands of an expression are equal but their expressions are not, this will return [`None`]`.
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (self, other) {
+            (&Expression::Unary { .. }, &Expression::Binary { .. })
+                => Some(Ordering::Less),
+            (&Expression::Unary { opr: ref opr1, expr: ref expr1 }, &Expression::Unary { opr: ref opr2, expr: ref expr2 })
+                => (expr1 == expr2 && opr1 == opr2).then_some(Ordering::Equal),
+            (&Expression::Unary { .. }, &Expression::Atom(..))
+                => Some(Ordering::Less),
+            (&Expression::Binary { .. }, &Expression::Atom(..))
+                => Some(Ordering::Less),
+            (&Expression::Binary { lhs: ref lhs1, opr: ref opr1, rhs: ref rhs1 }, &Expression::Binary { lhs: ref lhs2, opr: ref opr2, rhs: ref rhs2 }) => {
+                let ordering = opr1.cmp(&opr2);
+                if ordering == Ordering::Equal {
+                    (lhs1 == lhs2 && rhs1 == rhs2).then_some(Ordering::Equal)
+                } else {
+                    Some(ordering)
+                }
+            },
+            (&Expression::Atom(..), &Expression::Atom(..)) =>
+                (self == other).then_some(Ordering::Equal),
+            (a, b) => b.partial_cmp(a)
+        }
+    }
+}
+
 /// Represents an infix operand for an expression.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Infix {
-    /// Assign the right hand side to the value at the left hand side.
-    Assign,
     /// Takes the value on the left hand side if the expression evaluates to true, elsewise the right hand side.
     Ternary(BoxedExp),
     /// Takes the logical OR of the left and right hand sides, short circuting if the left hand is true.
@@ -282,7 +318,6 @@ impl Infix {
             LogicalAnd => 9,
             LogicalOr => 10,
             Ternary(..) => 11,
-            Assign => 12
         }
     }
 }
@@ -320,6 +355,14 @@ pub enum UnaryOperand {
     Index(BoxedExp),
     /// Casting the expression to another type.
     Cast(Type),
+}
+
+impl UnaryOperand {
+    /// Returns the placement of this unary operand as a boolean stating whether it's a prefix.
+    #[inline]
+    pub fn is_prefix(&self) -> bool {
+        matches!(self, UnaryOperand::Negation | UnaryOperand::Not | UnaryOperand::Reference | UnaryOperand::Dereference)
+    }
 }
 
 /// TODO
@@ -565,28 +608,120 @@ display_impl! {
                     Ok(())
                 }
                 Statement::For { init, check, update, inner } => todo!(),
-                Statement::While { .. } => todo!(),
-                Statement::Forever { .. } => todo!(),
-                Statement::Break => todo!(),
-                Statement::Continue => todo!(),
-                Statement::Return { .. } => todo!(),
-                Statement::Drop { .. } => todo!(),
-                Statement::Initialize { .. } => todo!()
+                Statement::While { check, inner } => todo!(),
+                Statement::Forever { inner } => todo!(),
+                Statement::Break => 
+                    write_indented!(f, indent, "break;"),
+                Statement::Continue =>
+                    write_indented!(f, indent, "continue;"),
+                Statement::Return { expr: Some(expr) } => 
+                    write_indented!(f, indent, "return {};", expr),
+                Statement::Return { expr: None } => 
+                    write_indented!(f, indent, "return;"),
+                Statement::Drop { expr } => 
+                    write_indented!(f, indent, "drop {};", expr),
+                Statement::Initialize { ty, name, expr: Some(expr) } =>
+                    write_indented!(f, indent, "{} {} = {};", ty, name, expr),
+                Statement::Initialize { ty, name, expr: None } =>
+                    write_indented!(f, indent, "{} {};", ty, name),
+                Statement::Assign { lhs, rhs } =>
+                    write_indented!(f, indent, "{} = {};", lhs, rhs)
             }
         }
     }
 
     impl Display for Expression {
         fn display(&self, f: &mut Formatter<'_>, _indent: usize) -> fmt::Result {
-            write!(f, "<expr: TODO>")
+            match self {
+                Expression::Binary { lhs, opr, rhs } => {
+                    if lhs.as_ref() > self {
+                        write!(f, "(")?;
+                    }
+                    write!(f, "{lhs}")?;
+                    if lhs.as_ref() > self {
+                        write!(f, ")")?;
+                    }
+                    write!(f, " {opr} ")?;
+                    if rhs.as_ref() > self {
+                        write!(f, "(")?;
+                    }
+                    write!(f, "{rhs}")?;
+                    if rhs.as_ref() > self {
+                        write!(f, ")")?;
+                    }
+                    Ok(())
+                },
+                Expression::Unary { opr, expr } => {
+                    if opr.is_prefix() {
+                        write!(f, "{opr}")?;
+                    }
+                    if expr.as_ref() > self {
+                        write!(f, "(")?;
+                    }
+                    write!(f, "{expr}")?;
+                    if expr.as_ref() > self {
+                        write!(f, ")")?;
+                    }
+                    if !opr.is_prefix() {
+                        write!(f, "{opr}")?;
+                    }
+                    Ok(())
+                },
+                // Terminate recursion
+                Expression::Atom(atom) =>
+                    write!(f, "{atom}")
+            }
+        }
+    }
+
+    impl Display for Atom {
+        fn display(&self, f: &mut Formatter<'_>, _indent: usize) -> fmt::Result {
+            write!(f, "<atom: TODO>")
+        }
+    }
+
+    impl Display for Infix {
+        fn display(&self, f: &mut Formatter<'_>, _indent: usize) -> fmt::Result {
+            match self {
+                Infix::LogicalOr => write!(f, "or"),
+                Infix::LogicalAnd => write!(f, "and"),
+                Infix::BitwiseOr => write!(f, "|"),
+                Infix::BitwiseAnd => write!(f, "&"),
+                Infix::BitwiseXor => write!(f, "^"),
+                Infix::Equal => write!(f, "=="),
+                Infix::NotEqual => write!(f, "!="),
+                Infix::Less => write!(f, "<"),
+                Infix::LessOrEqual => write!(f, "<="),
+                Infix::Greater => write!(f, ">"),
+                Infix::GreaterOrEqual => write!(f, ">="),
+                Infix::Spaceship => write!(f, "<=>"),
+                Infix::ShiftLeft => write!(f, "<<"),
+                Infix::ShiftRight => write!(f, ">>"),
+                Infix::Add => write!(f, "+"),
+                Infix::Subtract => write!(f, "-"),
+                Infix::Multiply => write!(f, "*"),
+                Infix::Divide => write!(f, "/"),
+                Infix::Remainder => write!(f, "%"),
+                Infix::Access => write!(f, "."),
+                Infix::Ternary(expr) => write!(f, "if {expr} else"),
+            }
+        }
+    }
+
+    impl Display for UnaryOperand {
+        fn display(&self, f: &mut Formatter<'_>, _indent: usize) -> fmt::Result {
+            match self {
+                UnaryOperand::Negation => write!(f, "-"),
+                UnaryOperand::Not => write!(f, "!"),
+                UnaryOperand::Reference => write!(f, "&"),
+                UnaryOperand::Dereference => write!(f, "*"),
+                UnaryOperand::Call(list) => write!(f, "({})", list.iter().map(|v| format!("{v}")).join(", ")),
+                UnaryOperand::Index(expr) => write!(f, "[{expr}]"),
+                UnaryOperand::Cast(ty) => write!(f, "as {ty}"),
+            }
         }
     }
 }
-
-
-
-
-
 
 fn main() {
     let tree = Element::Function {
