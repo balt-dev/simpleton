@@ -9,14 +9,14 @@ constant = { vis ~ kw_constant ~ ty ~ ident ~ "=" ~ expression ~ semicolon}
 static = { vis ~ kw_static ~ ty ~ ident ~ "=" ~ expression ~ semicolon}
 
 struct        = { vis ~ kw_struct ~ ident ~ "{" ~ struct_fields ~ "}" }
-struct_fields = { (struct_field ~ ("," ~ struct_field)* ~ ","?)? }
+struct_fields = _{ (struct_field ~ ("," ~ struct_field)* ~ ","?)? }
 struct_field  = { vis ~ ty ~ ident }
 
 union        = { vis ~ kw_union ~ ident ~ "{" ~ struct_fields ~ "}" }
 
 enum        = { vis ~ kw_enum ~ enum_repr ~ ident ~ "{" ~ enum_fields ~ "}" }
-enum_fields = { (enum_field ~ ("," ~ enum_field)* ~ ","?)? }
-enum_field  = { ident ~ ("=" ~ int)? }
+enum_fields = _{ (enum_field ~ ("," ~ enum_field)* ~ ","?)? }
+enum_field  = { ident ~ ("=" ~ sint)? }
 enum_repr   = { "uint8" | "uint16" | "uint32" | "uint64" | "int8" | "int16" | "int32" | "int64" | "uptr" | "ptr" }
 
 func      = { vis ~ maybe_const ~ maybe_inline ~ kw_func ~ ty ~ path ~ "(" ~ func_args ~ ")" ~ block }
@@ -69,7 +69,7 @@ sum_exp     = { prod_exp ~ (sum ~ prod_exp)* }
 prod_exp    = { access_exp ~ (prod ~ access_exp)* }
 access_exp  = { post_exp ~ (access ~ post_exp)* }
 post_exp    = { pref_exp ~ post* }
-pref_exp    = { pref* ~ atom }
+pref_exp    = { pref* ~ (atom | "(" ~ expression ~ ")") }
 
 assign  = _{ set }
 set     =  { "=" }
@@ -116,19 +116,20 @@ call    =  { "(" ~ expression_list ~ ")" }
 index   =  { "[" ~ expression ~ "]" }
 cast    =  { kw_as ~ ty }
 
-atom = { size | path | alloc | int | float | string | "[" ~ expression_list ~ "]" | "(" ~ expression ~ ")" }
+atom = { size | path | alloc | int | float | string | "[" ~ expression_list ~ "]" }
 
 size  = { kw_size ~ ty }
 path  = { ident ~ ("::" ~ ident)* }
 alloc = { kw_alloc ~ ty }
 
-
-int = _{ dec_int | hex_int | bin_int | oct_int | char_ }
+sint = {(neg | pos)? ~ int}
+pos = {"+"}
+int = _{ hex_int | bin_int | oct_int | dec_int | char_ }
 
 dec_int = @{ ASCII_DIGIT+ }
-hex_int = @{ ASCII_HEX_DIGIT+ }
-bin_int = @{ ASCII_BIN_DIGIT+ }
-oct_int = @{ ASCII_OCT_DIGIT+ }
+hex_int = @{ "0x" ~ ASCII_HEX_DIGIT+ }
+bin_int = @{ "0b" ~ ASCII_BIN_DIGIT+ }
+oct_int = @{ "0o" ~ ASCII_OCT_DIGIT+ }
 
 char_ = _{"'" ~ char ~ "'"}
 char = {("\\" | !"\'") ~ ANY}

@@ -1,11 +1,16 @@
 //! Language constructs defining the AST of the language.
+#![allow(clippy::enum_glob_use)]
 
-use std::{cmp::Ordering, fmt::{
-    self,
-    Display,
-    Formatter,
-}};
+use std::{
+    cmp::Ordering,
+    fmt::{
+        self,
+        Display,
+        Formatter,
+    }
+};
 use itertools::Itertools;
+use ordered_float::NotNan;
 
 /// Alias for referencing a block of statements.
 pub type Block = Vec<Statement>;
@@ -69,7 +74,7 @@ pub enum Element {
         /// This enum's name.
         name: String,
         /// This enum's variants.
-        variants: Vec<(Visibility, String, u64)>,
+        variants: Vec<(Visibility, String, i128)>,
     },
     /// A union.
     Union {
@@ -135,7 +140,7 @@ pub enum Statement {
         /// Each potential case of the if statement, in order.
         cases: Vec<(Expression, Block)>,
         /// The fallback case of the if statement, if there is one.
-        fallback: Option<Block>,
+        fallback: Block,
     },
     /// A for loop.
     For {
@@ -144,7 +149,7 @@ pub enum Statement {
         /// The expression to check every iteration.
         check: Option<Expression>,
         /// The expression to run every iteration.
-        update: Option<Expression>,
+        update: Option<Box<Statement>>,
         /// The block to run every iteration.
         inner: Block,
     },
@@ -220,32 +225,29 @@ pub enum Expression {
 impl PartialOrd for Expression {
     /// Compares expressions by their precedence - that is, if one expression is greater than the other,
     /// it would need to be parenthesized if inside of the other.
-    /// If the operands of an expression are equal but their expressions are not, this will return [`None`]`.
+    /// If the operands of an expression are equal but their expressions are not, this will return [`None`].
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self, other) {
-            (&Expression::Unary { .. }, &Expression::Binary { .. })
-                => Some(Ordering::Less),
-            (&Expression::Unary { opr: ref opr1, expr: ref expr1 }, &Expression::Unary { opr: ref opr2, expr: ref expr2 })=> {
-                let ordering = opr1.cmp(&opr2);
+            (Expression::Unary { opr: opr1, expr: expr1 }, Expression::Unary { opr: opr2, expr: expr2 })=> {
+                let ordering = opr1.cmp(opr2);
                 if ordering == Ordering::Equal {
                     (expr1 == expr2).then_some(Ordering::Equal)
                 } else {
                     Some(ordering)
                 }
             },
-            (&Expression::Unary { .. }, &Expression::Atom(..))
+            (Expression::Unary { .. }, Expression::Atom(..) | Expression::Binary { .. })
+                | (Expression::Binary { .. }, Expression::Atom(..))
                 => Some(Ordering::Less),
-            (&Expression::Binary { .. }, &Expression::Atom(..))
-                => Some(Ordering::Less),
-            (&Expression::Binary { lhs: ref lhs1, opr: ref opr1, rhs: ref rhs1 }, &Expression::Binary { lhs: ref lhs2, opr: ref opr2, rhs: ref rhs2 }) => {
-                let ordering = opr1.cmp(&opr2);
+            (Expression::Binary { lhs: lhs1, opr: opr1, rhs: rhs1 }, Expression::Binary { lhs: lhs2, opr: opr2, rhs: rhs2 }) => {
+                let ordering = opr1.cmp(opr2);
                 if ordering == Ordering::Equal {
                     (lhs1 == lhs2 && rhs1 == rhs2).then_some(Ordering::Equal)
                 } else {
                     Some(ordering)
                 }
             },
-            (&Expression::Atom(..), &Expression::Atom(..)) =>
+            (Expression::Atom(..), Expression::Atom(..)) =>
                 (self == other).then_some(Ordering::Equal),
             (a, b) => b.partial_cmp(a)
         }
@@ -341,13 +343,13 @@ impl Ord for Infix {
     /// Gets the ordering of this infix, comparing by operator precedence.
     /// Operators processed first will be marked as less than operators processed last.
     /// Operator precedence is **guaranteed** to be stable across minor versions.
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         self.precedence().cmp(&other.precedence())
     }
 }
 
 impl PartialOrd for Infix {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
@@ -375,6 +377,7 @@ pub enum UnaryOperand {
 impl UnaryOperand {
     /// Returns the placement of this unary operand as a boolean stating whether it's a prefix.
     #[inline]
+    #[must_use]
     pub fn is_prefix(&self) -> bool {
         matches!(self, UnaryOperand::Negation | UnaryOperand::Not | UnaryOperand::Reference | UnaryOperand::Dereference)
     }
@@ -382,13 +385,8 @@ impl UnaryOperand {
     fn precedence(&self) -> usize {
         use UnaryOperand::*;
         match self {
-            Not => 0,
-            Negation => 1,
-            Reference => 2,
-            Dereference => 3,
-            Call(..) => 4,
-            Index(..) => 5,
-            Cast(..) => 6,
+            Not | Negation | Reference | Dereference => 0,
+            Call(..) | Index(..) | Cast(..) => 1,
         }
     }
 }
@@ -405,9 +403,25 @@ impl Ord for UnaryOperand {
     }
 }
 
-/// TODO
+/// A single value, not broken up into new expressions.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Atom;
+pub enum Atom {
+    /// Represents the size of a type.
+    Size(Type),
+    /// A path to a variable.
+    Path(Vec<String>),
+    /// A new heap allocation.
+    Alloc(BoxedExp),
+    /// An integer.
+    Integer(i128), // This can represent up to a u64 or i64 in code, so it needs to be able to represent both
+    /// A floating point value.
+    Float(NotNan<f64>),
+    /// A string.
+    String(String),
+    /// A list of expressions.
+    List(Vec<Expression>),
+
+}
 
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -440,7 +454,7 @@ pub enum TypeTag {
     /// Type is an array of values with a length.
     Array {
         /// The length of the array.
-        length: u64
+        length: usize
     },
 }
 
@@ -484,12 +498,12 @@ display_impl! {
         fn display(&self, f: &mut Formatter<'_>, mut indent: usize) -> fmt::Result {
             match self {
                 Element::Import{vis, path } =>
-                    write_indented!(f, indent, "{}import {}", vis, path.join("::")),
+                    write!(f, "{vis}import {}", path.join("::")),
                 Element::ExternalImport{vis, path } =>
-                    write_indented!(f, indent, "{}import {}", vis, path.escape_default()),
+                    write!(f, "{vis}import {}", path.escape_default()),
                 Element::Struct{vis, name, fields } => {
-                    writeln_indented!(
-                        f, indent, "{}struct {} {{", vis, name
+                    writeln!(
+                        f, "{vis}struct {name} {{"
                     )?;
                     indent += 1;
                     for (vis, ty, name) in fields {
@@ -501,12 +515,12 @@ display_impl! {
                     write_indented!(f, indent, "}}")
                 },
                 Element::Constant{vis, ty, name, value } =>
-                    write_indented!(f, indent, "{}constant {} {} = {};", vis, ty, name, value),
+                    write!(f, "{vis}constant {ty} {name} = {value};"),
                 Element::Static{vis, ty, name, value} =>
-                    write_indented!(f, indent, "{}static {} {} = {};", vis, ty, name, value),
+                    write!(f, "{vis}static {ty} {name} = {value};"),
                 Element::Enum{vis, repr, name, variants} => {
-                    writeln_indented!(
-                        f, indent, "{}enum {} {} {{", vis, repr, name
+                    writeln!(
+                        f, "{vis}enum {repr} {name} {{"
                     )?;
                     indent += 1;
                     let mut last_repr = 0;
@@ -522,8 +536,8 @@ display_impl! {
                     write_indented!(f, indent, "}}")
                 },
                 Element::Union{ name, representations, vis } => {
-                    writeln_indented!(
-                        f, indent, "{}union {} {{", vis, name
+                    writeln!(
+                        f, "{vis}union {name} {{"
                     )?;
                     indent += 1;
                     for (vis, ty, name) in representations {
@@ -535,7 +549,7 @@ display_impl! {
                     write_indented!(f, indent, "}}")
                 },
                 Element::Function{vis,constant,inline,ty,path,arguments,block  } => {
-                    write_indented!(f, indent, "{}", vis)?;
+                    write!(f, "{vis}")?;
                     if *constant {
                         write!(f, "constant ")?;
                     }
@@ -543,7 +557,7 @@ display_impl! {
                         write!(f, "inline ")?;
                     }
                     write!(
-                        f, "{ty} {} ({}) {{",
+                        f, "function {ty} {} ({}) {{",
                         path.join("::"),
                         Itertools::intersperse(
                             arguments.iter().map(|(ty, name)| {
@@ -555,7 +569,9 @@ display_impl! {
                     indent += 1;
                     writeln!(f)?;
                     for statement in block {
-                        writeln_indented!(f, indent, "{}", statement)?;
+                        write_indented!(f, indent, "")?;
+                        statement.display(f, indent)?;
+                        writeln!(f)?;
                     }
                     indent -= 1;
                     write_indented!(f, indent, "}}")
@@ -617,55 +633,101 @@ display_impl! {
         fn display(&self, f: &mut Formatter<'_>, mut indent: usize) -> fmt::Result {
             match self {
                 Statement::Expression(expr) =>
-                    write_indented!(f, indent, "{};", expr),
+                    write!(f, "{expr};"),
                 Statement::If { cases, fallback } => {
                     let mut first_case = true;
                     for (expr, block) in cases {
                         if !first_case {
-                            writeln!(f, " else if {} {{", expr)?;
-                        } else {
-                            writeln_indented!(f, indent, "if {} {{", expr)?;
-                            indent += 1;
+                            write!(f, " else ")?;
                         }
+                        writeln!(f, "if {expr} {{")?;
                         indent += 1;
-
                         for statement in block {
-                            writeln_indented!(f, indent, "{}", statement)?;
+                            write_indented!(f, indent, "")?;
+                            statement.display(f, indent)?;
+                            writeln!(f)?;
                         }
                         indent -= 1;
                         write_indented!(f, indent, "}}")?;
                         first_case = false;
                     }
-                    if let Some(fallback) = fallback {
+                    if !fallback.is_empty() {
                         writeln!(f, " else {{")?;
                         indent += 1;
                         for statement in fallback {
-                            writeln_indented!(f, indent, "{}", statement)?;
+                            write_indented!(f, indent, "")?;
+                            statement.display(f, indent)?;
+                            writeln!(f)?;
                         }
                         indent -= 1;
                         write_indented!(f, indent, "}}")?;
                     }
                     Ok(())
                 }
-                Statement::For { init, check, update, inner } => todo!(),
-                Statement::While { check, inner } => todo!(),
-                Statement::Forever { inner } => todo!(),
+                Statement::For { init, check, update, inner } => {
+                    write!(f, "for ")?;
+                    if let Some(init) = init {
+                        write!(f, "{init}")?;
+                    } else {
+                        write!(f, ";")?;
+                    }
+                    if let Some(check) = check {
+                        write!(f, " {check}")?;
+                    }
+                    write!(f, ";")?;
+                    if let Some(update) = update {
+                        write!(f, " {update}")?;
+                    } else {
+                        write!(f, ";")?;
+                    }
+                    writeln!(f, " {{")?;
+                    indent += 1;
+                    for statement in inner {
+                        write_indented!(f, indent, "")?;
+                        statement.display(f, indent)?;
+                        writeln!(f)?;
+                    }
+                    indent -= 1;
+                    write_indented!(f, indent, "}}")
+                },
+                Statement::While { check, inner } => {
+                    writeln!(f, "while {check} {{")?;
+                    indent += 1;
+                    for statement in inner {
+                        write_indented!(f, indent, "")?;
+                        statement.display(f, indent)?;
+                        writeln!(f)?;
+                    }
+                    indent -= 1;
+                    write_indented!(f, indent, "}}")
+                },
+                Statement::Forever { inner } => {
+                    writeln!(f, "forever {{")?;
+                    indent += 1;
+                    for statement in inner {
+                        write_indented!(f, indent, "")?;
+                        statement.display(f, indent)?;
+                        writeln!(f)?;
+                    }
+                    indent -= 1;
+                    write_indented!(f, indent, "}}")
+                },
                 Statement::Break => 
-                    write_indented!(f, indent, "break;"),
+                    write!(f, "break;"),
                 Statement::Continue =>
-                    write_indented!(f, indent, "continue;"),
+                    write!(f, "continue;"),
                 Statement::Return { expr: Some(expr) } => 
-                    write_indented!(f, indent, "return {};", expr),
+                    write!(f, "return {expr};"),
                 Statement::Return { expr: None } => 
-                    write_indented!(f, indent, "return;"),
+                    write!(f, "return;"),
                 Statement::Drop { expr } => 
-                    write_indented!(f, indent, "drop {};", expr),
+                    write!(f, "drop {expr};"),
                 Statement::Initialize { ty, name, expr: Some(expr) } =>
-                    write_indented!(f, indent, "{} {} = {};", ty, name, expr),
+                    write!(f, "{ty} {name} = {expr};"),
                 Statement::Initialize { ty, name, expr: None } =>
-                    write_indented!(f, indent, "{} {};", ty, name),
+                    write!(f, "{ty} {name};"),
                 Statement::Assign { lhs, rhs } =>
-                    write_indented!(f, indent, "{} = {};", lhs, rhs)
+                    write!(f, "{lhs} = {rhs};")
             }
         }
     }
@@ -716,7 +778,25 @@ display_impl! {
 
     impl Display for Atom {
         fn display(&self, f: &mut Formatter<'_>, _indent: usize) -> fmt::Result {
-            write!(f, "<atom: TODO>")
+            match self {
+                Atom::Size(ty) => write!(f, "size {ty}"),
+                Atom::Path(strings) => write!(f, "{}", strings.join("::")),
+                Atom::Alloc(expr) => write!(f, "alloc {expr}"),
+                Atom::Integer(int) => int.fmt(f),
+                Atom::Float(float) => float.fmt(f),
+                Atom::String(str) => write!(f, "\"{}\"", str.escape_default()),
+                Atom::List(l) => {
+                    write!(f, "[")?;
+                    let mut iter = l.iter().peekable();
+                    while let Some(expr) = iter.next() {
+                        write!(f, "{expr}")?;
+                        if iter.peek().is_some() {
+                            write!(f, ", ")?;
+                        }
+                    }
+                    write!(f, "]")
+                }
+            }
         }
     }
 
@@ -755,7 +835,8 @@ display_impl! {
                 UnaryOperand::Not => write!(f, "!"),
                 UnaryOperand::Reference => write!(f, "&"),
                 UnaryOperand::Dereference => write!(f, "*"),
-                UnaryOperand::Call(list) => write!(f, "({})", list.iter().map(|v| format!("{v}")).join(", ")),
+                UnaryOperand::Call(list) =>
+                    write!(f, "({})", list.iter().map(|v| format!("{v}")).join(", ")),
                 UnaryOperand::Index(expr) => write!(f, "[{expr}]"),
                 UnaryOperand::Cast(ty) => write!(f, " as {ty}"),
             }
@@ -763,6 +844,9 @@ display_impl! {
     }
 }
 
+#[cfg(test)]
+#[test]
+#[allow(clippy::too_many_lines)]
 fn main() {
     let tree = Element::Function {
         vis: Visibility::Public,
@@ -790,55 +874,165 @@ fn main() {
             )
         ],
         block: vec![
-            Statement::Expression(Expression::Binary { 
+            Statement::Expression(Expression::Binary {
                 lhs: Box::new(Expression::Binary{
-                    lhs: Box::new(Expression::Atom(Atom)),
+                    lhs: Box::new(Expression::Atom(Atom::Integer(4))),
                     opr: Infix::Add,
-                    rhs: Box::new(Expression::Atom(Atom))
-                }), 
-                opr: Infix::Multiply, 
-                rhs: Box::new(Expression::Atom(Atom))
+                    rhs: Box::new(Expression::Atom(Atom::Integer(3)))
+                }),
+                opr: Infix::Multiply,
+                rhs: Box::new(Expression::Atom(Atom::Integer(7)))
             }),
-            Statement::Expression(Expression::Binary { 
+            Statement::Expression(Expression::Binary {
                 lhs: Box::new(Expression::Binary{
-                    lhs: Box::new(Expression::Atom(Atom)),
+                    lhs: Box::new(Expression::Atom(Atom::Integer(4))),
                     opr: Infix::Multiply,
-                    rhs: Box::new(Expression::Atom(Atom))
-                }), 
-                opr: Infix::Add, 
-                rhs: Box::new(Expression::Atom(Atom))
+                    rhs: Box::new(Expression::Atom(Atom::Integer(3)))
+                }),
+                opr: Infix::Add,
+                rhs: Box::new(Expression::Atom(Atom::Integer(7)))
             }),
-            Statement::Expression(Expression::Unary { 
+            Statement::Expression(Expression::Unary {
                 opr: UnaryOperand::Dereference,
                 expr: Box::new(Expression::Unary{
                     opr: UnaryOperand::Cast(Type { tags: vec![], name: "type".to_string() }),
-                    expr: Box::new(Expression::Atom(Atom))
+                    expr: Box::new(Expression::Unary{
+                        opr: UnaryOperand::Dereference,
+                        expr: Box::new(Expression::Unary{
+                            opr: UnaryOperand::Reference,
+                            expr: Box::new(Expression::Atom(Atom::Path(vec!["x".into()])))
+                        })
+                    })
                 }),
             }),
-            Statement::Expression(Expression::Unary { 
+            Statement::Expression(Expression::Unary {
                 opr: UnaryOperand::Cast(Type { tags: vec![], name: "type".to_string() }),
                 expr: Box::new(Expression::Unary{
-                    opr: UnaryOperand::Dereference,
-                    expr: Box::new(Expression::Atom(Atom))
+                    opr: UnaryOperand::Reference,
+                    expr: Box::new(Expression::Unary{
+                        opr: UnaryOperand::Dereference,
+                        expr: Box::new(Expression::Atom(Atom::Path(vec!["x".into()])))
+                    })
                 }),
             }),
-            Statement::Expression(Expression::Atom(Atom)),
+            Statement::Expression(Expression::Atom(Atom::Path(vec!["ident".into()]))),
             Statement::If {
                 cases: vec![
                     (
-                        Expression::Binary { lhs: Box::new(Expression::Atom(Atom)), opr: Infix::Equal, rhs: Box::new(Expression::Atom(Atom)) },
-                        vec![Statement::Expression(Expression::Atom(Atom)), Statement::Expression(Expression::Atom(Atom))]
+                        Expression::Binary {
+                            lhs: Box::new(Expression::Atom(Atom::String("Hello".into()))),
+                            opr: Infix::Equal,
+                            rhs: Box::new(Expression::Atom(Atom::String("world!".into())))
+                        },
+                        vec![
+                            Statement::Expression(Expression::Atom(Atom::Path(vec!["ohNo".into()]))),
+                            Statement::Expression(Expression::Atom(Atom::Path(vec!["theseDontExist".into()])))
+                        ]
                     ),
                     (
-                        Expression::Unary { opr: UnaryOperand::Not, expr: Box::new(Expression::Atom(Atom)), },
-                        vec![Statement::Expression(Expression::Atom(Atom)), Statement::Expression(Expression::Atom(Atom))]
+                        Expression::Unary {
+                            opr: UnaryOperand::Not,
+                            expr: Box::new(Expression::Atom(Atom::Path(vec!["true".into()]))),
+                        },
+                        vec![
+                            Statement::Expression(Expression::Atom(Atom::Path(vec!["itsElevenThirty".into()]))),
+                            Statement::Expression(Expression::Atom(Atom::Path(vec!["andIAmTired".into()])))
+                        ]
                     )
                 ],
-                fallback: Some(vec![Statement::Expression(Expression::Atom(Atom)), Statement::Expression(Expression::Atom(Atom))])
+                fallback: vec![
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["veryVeryVeryTired".into()]))),
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["atLeastIHaveFriends".into()])))
+                ]
+            },
+            Statement::For {
+                init: None,
+                check: None,
+                update: None,
+                inner: vec![
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["foo".into()]))),
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["bar".into()])))
+                ]
+            },
+            Statement::For {
+                init: Some(Box::new(Statement::Expression(Expression::Atom(Atom::Integer(0))))),
+                check: None,
+                update: None,
+                inner: vec![
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["foo".into()]))),
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["bar".into()])))
+                ]
+            },
+            Statement::For {
+                init: None,
+                check: Some(Expression::Atom(Atom::Integer(0))),
+                update: None,
+                inner: vec![
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["foo".into()]))),
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["bar".into()])))
+                ]
+            },
+            Statement::For {
+                init: Some(Box::new(Statement::Expression(Expression::Atom(Atom::Integer(0))))),
+                check: Some(Expression::Atom(Atom::Integer(0))),
+                update: None,
+                inner: vec![
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["foo".into()]))),
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["bar".into()])))
+                ]
+            },
+            Statement::For {
+                init: None,
+                check: None,
+                update: Some(Box::new(Statement::Expression(Expression::Atom(Atom::Integer(0))))),
+                inner: vec![
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["foo".into()]))),
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["bar".into()])))
+                ]
+            },
+            Statement::For {
+                init: Some(Box::new(Statement::Expression(Expression::Atom(Atom::Integer(0))))),
+                check: None,
+                update: Some(Box::new(Statement::Expression(Expression::Atom(Atom::Integer(0))))),
+                inner: vec![
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["foo".into()]))),
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["bar".into()])))
+                ]
+            },
+            Statement::For {
+                init: None,
+                check: Some(Expression::Atom(Atom::Integer(0))),
+                update: Some(Box::new(Statement::Expression(Expression::Atom(Atom::Integer(0))))),
+                inner: vec![
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["foo".into()]))),
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["bar".into()])))
+                ]
+            },
+            Statement::For {
+                init: Some(Box::new(Statement::Expression(Expression::Atom(Atom::Integer(0))))),
+                check: Some(Expression::Atom(Atom::Integer(0))),
+                update: Some(Box::new(Statement::Expression(Expression::Atom(Atom::Integer(0))))),
+                inner: vec![
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["foo".into()]))),
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["bar".into()])))
+                ]
+            },
+            Statement::While {
+                check: Expression::Atom(Atom::Integer(0)),
+                inner: vec![
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["foo".into()]))),
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["bar".into()])))
+                ]
+            },
+            Statement::Forever {
+                inner: vec![
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["foo".into()]))),
+                    Statement::Expression(Expression::Atom(Atom::Path(vec!["bar".into()])))
+                ]
             }
         ],
     };
 
-    println!("{tree:#}")
+    println!("{tree:#}");
 }
 
