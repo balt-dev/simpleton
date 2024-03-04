@@ -2,11 +2,11 @@ file = _{ SOI ~ top_level* ~ EOI }
 
 top_level = _{ struct | enum | func | import | extern | constant | static }
 
-import = { vis ~ kw_import ~ path ~ semicolon }
-extern = { vis ~ kw_extern ~ kw_import ~ string ~ semicolon }
+import = { vis ~ kw_import ~ path ~ ";" }
+extern = { vis ~ kw_extern ~ kw_import ~ string ~ ";" }
 
-constant = { vis ~ kw_constant ~ ty ~ ident ~ "=" ~ expression ~ semicolon}
-static = { vis ~ kw_static ~ ty ~ ident ~ "=" ~ expression ~ semicolon}
+constant = { vis ~ kw_constant ~ ty ~ ident ~ "=" ~ expression ~ ";"}
+static = { vis ~ kw_static ~ ty ~ ident ~ "=" ~ expression ~ ";"}
 
 struct        = { vis ~ kw_struct ~ ident ~ "{" ~ struct_fields ~ "}" }
 struct_fields = _{ (struct_field ~ ("," ~ struct_field)* ~ ","?)? }
@@ -41,7 +41,7 @@ else_if    = { kw_else ~ kw_if ~ expression ~ block }
 else_maybe = { else? }
 else       = { kw_else ~ block }
 
-for     = { kw_for ~ line_stmt ~ semicolon ~ expression? ~ semicolon ~ expression? ~ block }
+for     = { kw_for ~ line_stmt ~ ";" ~ expression? ~ ";" ~ expression? ~ block }
 while   = { kw_while ~ expression ~ block }
 forever = { kw_forever ~ block }
 
@@ -198,8 +198,6 @@ kw_as       = _{ "as" }
 kw_size     = _{ "size" }
 kw_import   = _{ "import" }
 kw_extern   = _{ "external" }
-
-semicolon = _{ ";" }
 
 WHITESPACE = _{ " " | "\r" | "\t" | "\n" }
 COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* | "/" ~ PUSH("*"*) ~ (!(PEEK ~ "/") ~ ANY) ~ POP ~ "/" }

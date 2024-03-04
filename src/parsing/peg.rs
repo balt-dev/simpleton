@@ -72,6 +72,13 @@ fn parse_integer(pair: &Pair<'_, Rule>) -> Option<i128> {
     }
 }
 
+/// Parses a vector of strings from a path.
+fn parse_path(pair: Pair<'_, Rule>) -> Vec<String> {
+    pair.into_inner().step_by(2)
+        .map(|v| v.as_str().to_string())
+        .collect()
+}
+
 /// Constructs a pest error with a given span and message.
 macro_rules! pest_err {
     ($span: expr; $($tt: tt)*) => {
@@ -258,7 +265,12 @@ impl TryFrom<Pair<'_, Rule>> for Element {
                 }
             },
             Rule::func => {},
-            Rule::import => {},
+            Rule::import => {
+                let visibility = inner.next().unwrap().try_into()?;
+                let child = inner.next().unwrap();
+                let path = parse_path(child);
+                Element::Import { vis: (), path: () }
+            },
             Rule::r#extern => {},
             Rule::constant | Rule::r#static => {},
             _ =>
